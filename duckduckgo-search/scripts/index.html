@@ -10,32 +10,33 @@
                 const jsonData = JSON.parse(data);
                 const query = jsonData.query;
 
-                const response = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json`);
+                // DuckDuckGo का असली HTML सर्च URL
+                const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+                
+                // CORS एरर से बचने के लिए AllOrigins फ्री प्रॉक्सी का उपयोग
+                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(ddgUrl)}`;
+                
+                const response = await fetch(proxyUrl);
                 const result = await response.json();
-
+                
+                // HTML कोड को पढ़ना (Web Scraping)
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(result.contents, "text/html");
+                
+                // DuckDuckGo के सर्च रिजल्ट्स (Snippets) ढूँढना
+                const snippets = doc.querySelectorAll('.result__snippet');
                 let answer = "";
                 
-                // 1. अगर कोई सीधा जवाब (Abstract) है, तो उसे लें (यह वैसे भी बहुत छोटा होता है)
-                if (result.AbstractText) {
-                    answer = result.AbstractText;
-                } 
-                // 2. अगर सीधा जवाब नहीं है, तो सिर्फ टॉप 3 Related Topics लें
-                else if (result.RelatedTopics && result.RelatedTopics.length > 0) {
-                    // .slice(0, 3) का इस्तेमाल करके हम सिर्फ शुरुआती 3 रिजल्ट ही ले रहे हैं
-                    let top3 = result.RelatedTopics.slice(0, 3);
-                    
-                    // अब इन 3 रिजल्ट्स के टेक्स्ट को जोड़ लेते हैं
-                    let combinedTopics = top3.map(topic => topic.Text).filter(text => text !== undefined);
-                    answer = combinedTopics.join(" | ");
-                }
-                
-                if (!answer || answer.trim() === "") {
-                    answer = "मुझे इस विषय पर DuckDuckGo से कोई सीधा जवाब नहीं मिला।";
+                if (snippets.length > 0) {
+                    // टॉप 3 रिजल्ट्स लेना
+                    let top3 = Array.from(snippets).slice(0, 3);
+                    answer = top3.map(el => el.textContent.trim()).join(" | ");
+                } else {
+                    answer = "मुझे इंटरनेट पर इस विषय से जुड़ी कोई सटीक जानकारी नहीं मिली।";
                 }
 
-                // एजेंट को सिर्फ चुनिंदा और छोटा जवाब वापस भेजें
                 return JSON.stringify({
-                    result: `Search results for "${query}": ${answer}`
+                    result: `सर्च रिज़ल्ट "${query}": ${answer}`
                 });
             } catch (e) {
                 return JSON.stringify({
