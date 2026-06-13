@@ -1,49 +1,121 @@
 <!DOCTYPE html>
+
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DuckDuckGo Search Skill</title>
 </head>
 <body>
-    <script>
-        window['ai_edge_gallery_get_result'] = async (data) => {
-            try {
-                const jsonData = JSON.parse(data);
-                const query = jsonData.query;
 
-                // DuckDuckGo का असली HTML सर्च URL
-                const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-                
-                // CORS एरर से बचने के लिए AllOrigins फ्री प्रॉक्सी का उपयोग
-                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(ddgUrl)}`;
-                
-                const response = await fetch(proxyUrl);
-                const result = await response.json();
-                
-                // HTML कोड को पढ़ना (Web Scraping)
-                const parser = new DOMParser();
-                const doc = parser.parseFromString(result.contents, "text/html");
-                
-                // DuckDuckGo के सर्च रिजल्ट्स (Snippets) ढूँढना
-                const snippets = doc.querySelectorAll('.result__snippet');
-                let answer = "";
-                
-                if (snippets.length > 0) {
-                    // टॉप 3 रिजल्ट्स लेना
-                    let top3 = Array.from(snippets).slice(0, 3);
-                    answer = top3.map(el => el.textContent.trim()).join(" | ");
-                } else {
-                    answer = "मुझे इंटरनेट पर इस विषय से जुड़ी कोई सटीक जानकारी नहीं मिली।";
+<script>
+(function () {
+    "use strict";
+
+    const MAX_RESULTS = 3;
+
+    async function fetchSearchResults(query) {
+        const duckDuckGoUrl =
+            "https://html.duckduckgo.com/html/?q=" +
+            encodeURIComponent(query);
+
+        const proxyCandidates = [
+            "https://api.allorigins.win/get?url=" + encodeURIComponent(duckDuckGoUrl),
+            "https://corsproxy.io/?" + encodeURIComponent(duckDuckGoUrl)
+        ];
+
+        let html = null;
+        let lastError = null;
+
+        for (const proxyUrl of proxyCandidates) {
+            try {
+                const response = await fetch(proxyUrl, {
+                    method: "GET",
+                    cache: "no-store"
+                });
+
+                if (!response.ok) {
+                    throw new Error("HTTP " + response.status);
                 }
 
-                return JSON.stringify({
-                    result: `सर्च रिज़ल्ट "${query}": ${answer}`
-                });
-            } catch (e) {
-                return JSON.stringify({
-                    error: `सर्च फेल हो गया: ${e.message}`
-                });
+                if (proxyUrl.includes("allorigins.win")) {
+                    const data = await response.json();
+
+                    if (!data || !data.contents) {
+                        throw new Error("Empty response from AllOrigins");
+                    }
+
+                    html = data.contents;
+                } else {
+                    html = await response.text();
+                }
+
+                if (html && html.length > 0) {
+                    break;
+                }
+            } catch (err) {
+                lastError = err;
             }
-        };
-    </script>
+        }
+
+        if (!html) {
+            throw new Error(
+                "Unable to retrieve search results. " +
+                (lastError ? lastError.message : "Unknown error")
+            );
+        }
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        let snippets = Array.from(
+            doc.querySelectorAll(".result__snippet")
+        );
+
+        if (snippets.length === 0) {
+            snippets = Array.from(
+                doc.querySelectorAll("[class*='snippet']")
+            );
+        }
+
+        const extracted = snippets
+            .map(node => (node.textContent || "").trim())
+            .filter(text => text.length > 20)
+            .slice(0, MAX_RESULTS);
+
+        if (extracted.length === 0) {
+            throw new Error("No search snippets found");
+        }
+
+        return extracted.join(" | ");
+    }
+
+    window["ai_edge_gallery_get_result"] = async function (data) {
+        try {
+            const payload = JSON.parse(data || "{}");
+
+            const query = String(payload.query || "").trim();
+
+            if (!query) {
+                throw new Error("Search query is empty");
+            }
+
+            const results = await fetchSearchResults(query);
+
+            return JSON.stringify({
+                result: results
+            });
+
+        } catch (error) {
+            return JSON.stringify({
+                error: error && error.message
+                    ? error.message
+                    : "Unknown error"
+            });
+        }
+    };
+})();
+</script>
+
 </body>
 </html>
